@@ -113,132 +113,84 @@
 # else:
 #     st.info("👆 Please upload a CSV file to proceed.")
 
+import streamlit as st
 import pandas as pd
 import numpy as np
-import streamlit as st
-import seaborn as sns
-import matplotlib.pyplot as plt
-from word2number import w2n
 from sklearn.linear_model import LinearRegression
 from sklearn.model_selection import train_test_split
-from sklearn.metrics import mean_squared_error
-import joblib
+from sklearn.metrics import mean_absolute_error, mean_squared_error
 import os
 
-st.set_page_config(page_title="📚 School Fee Analysis", layout="wide")
-st.title("📊 School Fee Analysis & Prediction App")
+st.set_page_config(page_title="Nepal School Fee Predictor", layout="wide")
+st.title("Private School Fee Analysis in Nepal")
 
-# ===================== File Upload / Default =====================
-uploaded_file = st.file_uploader("📁 Upload your School Fee CSV file", type=["csv"])
+# File upload section
+st.sidebar.header("Upload Dataset")
+user_file = st.sidebar.file_uploader("Upload CSV", type=["csv"])
 
-if uploaded_file:
-    df = pd.read_csv(uploaded_file)
-    st.info("✅ File uploaded successfully!")
-else:
-    default_file = "Anupama_Wrangled_School_Fee_Dataset.csv"
-    if os.path.exists(default_file):
-        st.info("📂 No file uploaded. Using default dataset.")
-        df = pd.read_csv(default_file)
+def load_data():
+    if user_file:
+        return pd.read_csv(user_file)
+    elif os.path.exists("cleaned_data.csv"):
+        return pd.read_csv("cleaned_data.csv")
     else:
-        st.error("❌ No file uploaded and default file not found.")
-        st.stop()
+        st.warning("No data available. Please upload a file or check local dataset.")
+        return pd.DataFrame()
 
-# ===================== Data Cleaning =====================
-df['Admission Fee (NPR)'] = df['Admission Fee (NPR)'].fillna(df['Admission Fee (NPR)'].median())
-df['Technology Access Index'] = df['Technology Access Index'].fillna(df['Technology Access Index'].mean())
+# Load data
+df = load_data()
 
-# Word to number for Monthly Fee
-def convert_to_number(value):
-    try:
-        return w2n.word_to_num(value)
-    except:
-        try:
-            return float(value)
-        except:
-            return None
+if not df.empty:
+    st.subheader("Dataset Preview")
+    st.dataframe(df.head())
 
-df['Monthly Fee (NPR)'] = df['Monthly Fee (NPR)'].astype(str).apply(convert_to_number)
+    # Allow user to manually enter data
+    st.subheader("Manual Data Entry")
+    infra = st.number_input("Infrastructure Score", min_value=0.0, max_value=100.0, value=50.0)
+    tech = st.number_input("Technology Access Index", min_value=0.0, max_value=100.0, value=50.0)
+    academic = st.number_input("Average Academic Score (%)", min_value=0.0, max_value=100.0, value=50.0)
 
-# Clean Student-Teacher Ratio
-df['Student-Teacher Ratio'] = pd.to_numeric(df['Student-Teacher Ratio'].astype(str).str.strip(), errors='coerce')
-df['Student-Teacher Ratio'] = df['Student-Teacher Ratio'].fillna(df['Student-Teacher Ratio'].mean())
+    if st.button("Add Entry"):
+        new_row = {
+            'Infrastructure Score': infra,
+            'Technology Access Index': tech,
+            'Average Academic Score (%)': academic,
+            'Annual Tuition Fee (NPR)': np.nan
+        }
+        df = pd.concat([df, pd.DataFrame([new_row])], ignore_index=True)
+        st.success("Entry added!")
 
-# Remove Duplicates
-df = df.drop_duplicates()
+    # Prepare features and labels
+    if all(col in df.columns for col in ['Infrastructure Score', 'Technology Access Index', 'Average Academic Score (%)', 'Annual Tuition Fee (NPR)']):
+        df_clean = df.dropna(subset=['Infrastructure Score', 'Technology Access Index', 'Average Academic Score (%)', 'Annual Tuition Fee (NPR)'])
 
-# Handle Outliers
-Q1 = df['Annual Tuition Fee (NPR)'].quantile(0.25)
-Q3 = df['Annual Tuition Fee (NPR)'].quantile(0.75)
-IQR = Q3 - Q1
-lower = Q1 - 1.5 * IQR
-upper = Q3 + 1.5 * IQR
-df['Annual Tuition Fee (NPR)'] = df['Annual Tuition Fee (NPR)'].clip(lower, upper)
+        X = df_clean[['Infrastructure Score', 'Technology Access Index', 'Average Academic Score (%)']]
+        y = df_clean['Annual Tuition Fee (NPR)']
 
-# ===================== Sidebar: Manual Entry =====================
-st.sidebar.header("📝 Add New School Data")
+        # Handle any inf or NaNs
+        X = X.replace([np.inf, -np.inf], np.nan).dropna()
+        y = y.loc[X.index]
 
-with st.sidebar.form("manual_entry"):
-    infra_score = st.slider("Infrastructure Score", 0, 100, 60)
-    tech_index = st.slider("Technology Access Index", 0, 100, 60)
-    academic_score = st.slider("Average Academic Score (%)", 0, 100, 70)
-    monthly_fee = st.number_input("Monthly Fee (NPR)", 500, 10000, 4000)
-    admission_fee = st.number_input("Admission Fee (NPR)", 500, 15000, 5000)
-    student_teacher_ratio = st.number_input("Student-Teacher Ratio", 5.0, 40.0, 25.0)
-    
-    submit = st.form_submit_button("➕ Add to Dataset")
+        if not X.empty:
+            # Train-test split
+            X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
 
-# Append user input
-if submit:
-    new_row = {
-        'Infrastructure Score': infra_score,
-        'Technology Access Index': tech_index,
-        'Average Academic Score (%)': academic_score,
-        'Monthly Fee (NPR)': monthly_fee,
-        'Admission Fee (NPR)': admission_fee,
-        'Student-Teacher Ratio': student_teacher_ratio
-    }
-    df = pd.concat([df, pd.DataFrame([new_row])], ignore_index=True)
-    st.success("✅ New school data added!")
+            # Train model
+            model = LinearRegression()
+            model.fit(X_train, y_train)
 
-    # Append user input
+            y_pred = model.predict(X_test)
 
+            st.subheader("Model Evaluation")
+            st.write("MAE:", mean_absolute_error(y_test, y_pred))
+            st.write("RMSE:", np.sqrt(mean_squared_error(y_test, y_pred)))
 
-# ===================== Visuals =====================
-st.subheader("📊 Correlation Heatmap")
-fig, ax = plt.subplots(figsize=(10, 5))
-sns.heatmap(df.corr(numeric_only=True), annot=True, cmap='coolwarm', ax=ax)
-st.pyplot(fig)
-
-# ===================== Linear Regression =====================
-st.subheader("🤖 Predict Tuition Fee (Linear Regression)")
-
-features = ['Infrastructure Score', 'Technology Access Index', 'Average Academic Score (%)']
-target = 'Annual Tuition Fee (NPR)'
-
-if target in df.columns:
-    X = df[features]
-    y = df[target]
-    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
-
-    model = LinearRegression()
-    model.fit(X_train, y_train)
-    y_pred = model.predict(X_test)
-
-    rmse = np.sqrt(mean_squared_error(y_test, y_pred))
-    st.write(f"📉 RMSE: {rmse:.2f}")
-
-    # Predict for last row (user-added)
-    st.subheader("🎯 Prediction for Latest School Entry")
-    latest_input = df[features].iloc[[-1]]
-    pred_fee = model.predict(latest_input)[0]
-    st.success(f"Estimated Annual Tuition Fee: ₹ {pred_fee:,.2f}")
-    
-    # Save model
-    joblib.dump(model, "linear_model.pkl")
+            st.subheader("Prediction on Manual Input")
+            pred_fee = model.predict([[infra, tech, academic]])[0]
+            st.success(f"Predicted Tuition Fee: NPR {pred_fee:,.2f}")
+        else:
+            st.warning("Not enough clean data to train the model.")
+    else:
+        st.warning("Required columns not found in dataset.")
 else:
-    st.warning("📌 Please ensure the dataset has 'Annual Tuition Fee (NPR)' column to train the model.")
-
-# ===================== Download Cleaned CSV =====================
-st.subheader("⬇️ Download Cleaned Dataset")
-csv = df.to_csv(index=False).encode('utf-8')
-st.download_button("Download as CSV", csv, "cleaned_data.csv")
+    st.warning("Please upload or load a valid dataset.")
