@@ -197,8 +197,11 @@ if submit:
         'Admission Fee (NPR)': admission_fee,
         'Student-Teacher Ratio': student_teacher_ratio
     }
-    df = df.append(new_row, ignore_index=True)
+    df = pd.concat([df, pd.DataFrame([new_row])], ignore_index=True)
     st.success("✅ New school data added!")
+
+    # Append user input
+
 
 # ===================== Visuals =====================
 st.subheader("📊 Correlation Heatmap")
